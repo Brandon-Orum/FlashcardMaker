@@ -1,1 +1,1 @@
-This is a project to quickly make flashcard.
+This is a project to quickly make flashcards.

@@ -1,5 +1,7 @@
 #include <iostream>
+#include <fstream>
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/utils/logger.hpp>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -9,6 +11,8 @@
 
 #include <windows.h>
 #include <wingdi.h>
+
+#include <json.h>
 
 void copyFromClipboard(cv::Mat& mat) {
     HBITMAP hbitmap = nullptr;
@@ -88,6 +92,24 @@ void multiLinePutText(cv::Mat img,
 }
 
 int main( int argc, char* argv[] ) {
+    cv::utils::logging::setLogLevel(cv::utils::logging::LogLevel::LOG_LEVEL_SILENT);
+
+    //read config file
+    Json::Value configRoot;
+    std::ifstream ifs;
+    ifs.open("../defaultConfig.json");
+
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = true;
+    JSONCPP_STRING errs;
+    if (!parseFromStream(builder, ifs, &configRoot, &errs)) {
+        std::cout << "Error reading config file" << std::endl;
+        std::cout << errs << std::endl;
+        return -1;
+    }
+    std::cout << "Configuration:" << std::endl;
+    std::cout << configRoot << std::endl;
+
     cv::Mat image;
     cv::Mat imageFromClipboard;
     copyFromClipboard(imageFromClipboard);
@@ -423,6 +445,49 @@ int main( int argc, char* argv[] ) {
         }
 
         bool saveButton = ImGui::Button("Save Flashcard"); ImGui::SameLine();
+        if (saveButton) {
+            std::string filePath = configRoot["flashcardSavePath"].asString();
+
+            time_t t = time(0);
+            struct tm* now = localtime(&t);
+            char fileName[80];
+            strftime(fileName, 80, "Flashcard-%Y-%m-%d", now);
+
+            std::ofstream saveFile(filePath + "/" + std::string(fileName) + ".json");
+
+            Json::Value saveJsonRoot;
+            Json::StreamWriterBuilder builder;
+            const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
+
+            //save boxes
+            int i = 0;
+            saveJsonRoot["answerBoxPositionsList"] = Json::arrayValue;
+            saveJsonRoot["questionBoxPositionsList"] = Json::arrayValue;
+            for (auto boxBoundsList : { answerBoxPositions, questionBoxPositions }) {
+                for (std::pair<cv::Point, cv::Point>& boxBounds : boxBoundsList) {
+                    Json::Value boxPositions = Json::arrayValue;
+                    Json::Value boxTopLeftPosition = Json::arrayValue;
+                    boxTopLeftPosition.append(boxBounds.first.x);
+                    boxTopLeftPosition.append(boxBounds.first.y);
+                    boxPositions.append(boxTopLeftPosition);
+                    Json::Value boxBottomRightPosition = Json::arrayValue;
+                    boxBottomRightPosition.append(boxBounds.second.x);
+                    boxBottomRightPosition.append(boxBounds.second.y);
+                    boxPositions.append(boxBottomRightPosition);
+                    if (i == 0) {
+                        saveJsonRoot["answerBoxPositionsList"].append(boxPositions);
+                    }
+                    else {
+                        saveJsonRoot["questionBoxPositionsList"].append(boxPositions);
+                    }
+                }
+                i++;
+            }
+
+            writer->write(saveJsonRoot, &saveFile);
+            saveFile.close();
+        }
+
         bool openButton = ImGui::Button("Open Image"); ImGui::SameLine();
         bool newButton = ImGui::Button("New Flashcard");
 
