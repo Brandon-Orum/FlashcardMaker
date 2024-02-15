@@ -1,5 +1,7 @@
 #include <iostream>
 #include <fstream>
+#include <sys/stat.h>
+#include <filesystem>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/utils/logger.hpp>
 
@@ -38,6 +40,11 @@ inline void rtrim(std::string& s) {
 inline void trim(std::string& s) {
     rtrim(s);
     ltrim(s);
+}
+
+void toLowercase(std::string& str) {
+    std::transform(str.begin(), str.end(), str.begin(),
+        [](unsigned char c) { return std::tolower(c); });
 }
 ////////////
 
@@ -116,6 +123,31 @@ void multiLinePutText(cv::Mat img,
         cv::putText(img, line, pos, fontFace, fontScale, color, thickness);
         pos += cv::Point(0, textSize.height * lineSpacing);
     }
+}
+
+std::vector<std::string> getAllTopics() {
+    std::vector<std::string> listOfTopics;
+    return listOfTopics;
+}
+
+std::vector<std::string> searchForFlashcards(std::string directory, std::string topic, std::vector<std::string> keywords) {
+    std::vector<std::string> flashcardFilenames;
+    // check if directory/topic is a valid directory
+    // open each json file found in the directory
+    // itterate through the keywords found in the json file
+    // if all the keywords listed in keywords are found, then add the name of the file to flashcardFilenames
+    struct stat sb;
+    const char* flashcardDirectory = std::string(directory + "/" + topic).c_str();
+    if (stat(flashcardDirectory, &sb) == 0) {
+        for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(flashcardDirectory)) {
+            std::cout << dirEntry << std::endl;
+        }
+    }
+    else {
+        int t = 0;
+    }
+    
+    return flashcardFilenames;
 }
 
 int main( int argc, char* argv[] ) {
@@ -476,64 +508,91 @@ int main( int argc, char* argv[] ) {
         ImGui::InputTextWithHint("Keywords", "ie. dog breed, country, ect.", keywordsBuffer, IM_ARRAYSIZE(keywordsBuffer));
 
         bool saveButton = ImGui::Button("Save Flashcard"); ImGui::SameLine();
-        if (saveButton) {
+        if (saveButton && topicBuffer[0] != 0) {
             std::string filePath = configRoot["flashcardSavePath"].asString();
-            std::ofstream saveFile(filePath + "/" + std::string(fileName) + ".json");
+            std::string topicStr(topicBuffer);
+            toLowercase(topicStr);
+            trim(topicStr);//do more checks to see if topicStr is an appropriate folder name
 
-            Json::Value saveJsonRoot;
-            Json::StreamWriterBuilder builder;
-            const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
+            //create folder with topic's name
+            if (CreateDirectory(std::string(filePath + "/" + topicStr).c_str(), NULL) || ERROR_ALREADY_EXISTS == GetLastError()) {
+                std::ofstream saveFile(filePath + "/" + topicStr + "/" + std::string(fileName) + ".json");
 
-            //save meta-data
-            saveJsonRoot["topic"] = topicBuffer;
-            saveJsonRoot["keywords"] = Json::arrayValue;
-            std::string keywordsBufferStr(keywordsBuffer);
-            std::stringstream ss(keywordsBufferStr);
-            while (ss.good()) {
-                std::string substr;
-                std::getline(ss, substr, ',');
-                trim(substr);
-                if (!substr.empty()) {
-                    saveJsonRoot["keywords"].append(substr.c_str());
-                }
-            }
+                Json::Value saveJsonRoot;
+                Json::StreamWriterBuilder builder;
+                const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
 
-            //save boxes
-            int i = 0;
-            saveJsonRoot["answerBoxPositionsList"] = Json::arrayValue;
-            saveJsonRoot["questionBoxPositionsList"] = Json::arrayValue;
-            for (auto boxBoundsList : { answerBoxPositions, questionBoxPositions }) {
-                for (std::pair<cv::Point, cv::Point>& boxBounds : boxBoundsList) {
-                    Json::Value boxPositions = Json::arrayValue;
-                    Json::Value boxTopLeftPosition = Json::arrayValue;
-                    boxTopLeftPosition.append(boxBounds.first.x);
-                    boxTopLeftPosition.append(boxBounds.first.y);
-                    boxPositions.append(boxTopLeftPosition);
-                    Json::Value boxBottomRightPosition = Json::arrayValue;
-                    boxBottomRightPosition.append(boxBounds.second.x);
-                    boxBottomRightPosition.append(boxBounds.second.y);
-                    boxPositions.append(boxBottomRightPosition);
-                    if (i == 0) {
-                        saveJsonRoot["answerBoxPositionsList"].append(boxPositions);
-                    }
-                    else {
-                        saveJsonRoot["questionBoxPositionsList"].append(boxPositions);
+                //save meta-data
+                saveJsonRoot["topic"] = topicBuffer;
+                saveJsonRoot["keywords"] = Json::arrayValue;
+                std::string keywordsBufferStr(keywordsBuffer);
+                std::stringstream ss(keywordsBufferStr);
+                while (ss.good()) {
+                    std::string substr;
+                    std::getline(ss, substr, ',');
+                    trim(substr);
+                    if (!substr.empty()) {
+                        saveJsonRoot["keywords"].append(substr.c_str());
                     }
                 }
-                i++;
+
+                //save boxes
+                int i = 0;
+                saveJsonRoot["answerBoxPositionsList"] = Json::arrayValue;
+                saveJsonRoot["questionBoxPositionsList"] = Json::arrayValue;
+                for (auto boxBoundsList : { answerBoxPositions, questionBoxPositions }) {
+                    for (std::pair<cv::Point, cv::Point>& boxBounds : boxBoundsList) {
+                        Json::Value boxPositions = Json::arrayValue;
+                        Json::Value boxTopLeftPosition = Json::arrayValue;
+                        boxTopLeftPosition.append(boxBounds.first.x);
+                        boxTopLeftPosition.append(boxBounds.first.y);
+                        boxPositions.append(boxTopLeftPosition);
+                        Json::Value boxBottomRightPosition = Json::arrayValue;
+                        boxBottomRightPosition.append(boxBounds.second.x);
+                        boxBottomRightPosition.append(boxBounds.second.y);
+                        boxPositions.append(boxBottomRightPosition);
+                        if (i == 0) {
+                            saveJsonRoot["answerBoxPositionsList"].append(boxPositions);
+                        }
+                        else {
+                            saveJsonRoot["questionBoxPositionsList"].append(boxPositions);
+                        }
+                    }
+                    i++;
+                }
+
+                writer->write(saveJsonRoot, &saveFile);
+                saveFile.close();
+
+                //save image
+                if (cv::imwrite(filePath + "/" + topicStr + "/" + std::string(fileName) + ".png", image));
             }
-
-            writer->write(saveJsonRoot, &saveFile);
-            saveFile.close();
-
-            //save image
-            if (cv::imwrite(filePath + "/" + fileName + ".png", image));
         }
 
         bool openButton = ImGui::Button("Open Image"); ImGui::SameLine();
         bool newButton = ImGui::Button("New Flashcard");
 
+        static bool showPresentFlashcardsWindow = false;
+        if (ImGui::Button("Present flashcards")) {
+            showPresentFlashcardsWindow = true;
+        }
         ImGui::End();
+
+        if (showPresentFlashcardsWindow) {
+            ImGui::Begin("Present flashcards");
+            ImGui::InputTextWithHint("Topics", "Filter by topics (seperate with commas)", topicBuffer, IM_ARRAYSIZE(topicBuffer));
+            ImGui::InputTextWithHint("Keywords", "Filter by keywords (seperate with commas)", topicBuffer, IM_ARRAYSIZE(topicBuffer));
+            ImGui::Text("Flashcards found: 0");
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasMat.cols, canvasMat.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, canvasMat.data);
+            ImGui::Image(reinterpret_cast<void*>(static_cast<intptr_t>(texture)), ImVec2(canvasMat.cols, canvasMat.rows));
+            ImGui::Text("Some text");
+            ImGui::Button("Back to creating flashcards");
+
+            //test code
+            searchForFlashcards("../SavedFlashcards", "test topic", { "keyword1", "keyword2", "keyword3" });
+
+            ImGui::End();
+        }
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
