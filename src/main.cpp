@@ -14,6 +14,33 @@
 
 #include <json.h>
 
+
+//////////////put into seperate library
+#include <algorithm> 
+#include <cctype>
+#include <locale>
+
+// trim from start (in place)
+inline void ltrim(std::string& s) {
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+        }));
+}
+
+// trim from end (in place)
+inline void rtrim(std::string& s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+        }).base(), s.end());
+}
+
+// trim from both ends (in place)
+inline void trim(std::string& s) {
+    rtrim(s);
+    ltrim(s);
+}
+////////////
+
 void copyFromClipboard(cv::Mat& mat) {
     HBITMAP hbitmap = nullptr;
     if (!::OpenClipboard(nullptr))
@@ -110,6 +137,12 @@ int main( int argc, char* argv[] ) {
     std::cout << "Configuration:" << std::endl;
     std::cout << configRoot << std::endl;
 
+    //make a file name for saving the flashcard
+    time_t t = time(0);
+    struct tm* now = localtime(&t);
+    char fileName[80];
+    strftime(fileName, 80, "Flashcard-%Y-%m-%d-%H-%M-%S", now);
+
     cv::Mat image;
     cv::Mat imageFromClipboard;
     copyFromClipboard(imageFromClipboard);
@@ -129,6 +162,7 @@ int main( int argc, char* argv[] ) {
     //buffers
     static char textBuffer[1000*1000] = "";
     static char topicBuffer[128] = "";
+    static char keywordsBuffer[1000] = "";
 
     if( !glfwInit() ){
         return -1;
@@ -438,26 +472,31 @@ int main( int argc, char* argv[] ) {
         ImGui::Text("Topic:"); ImGui::SameLine();
         ImGui::InputText("", topicBuffer, IM_ARRAYSIZE(topicBuffer));
 
-        bool addSubtopicButton = ImGui::Button("Add Subtopic");
-        static int numSubtopics = 0;
-        for (int i = numSubtopics; i > 0; i--) {
-            bool removeSubtopicButton = ImGui::Button("Remove Subtopic");
-        }
+        ImGui::Text("Keywords (separate with commas):");
+        ImGui::InputTextWithHint("Keywords", "ie. dog breed, country, ect.", keywordsBuffer, IM_ARRAYSIZE(keywordsBuffer));
 
         bool saveButton = ImGui::Button("Save Flashcard"); ImGui::SameLine();
         if (saveButton) {
             std::string filePath = configRoot["flashcardSavePath"].asString();
-
-            time_t t = time(0);
-            struct tm* now = localtime(&t);
-            char fileName[80];
-            strftime(fileName, 80, "Flashcard-%Y-%m-%d", now);
-
             std::ofstream saveFile(filePath + "/" + std::string(fileName) + ".json");
 
             Json::Value saveJsonRoot;
             Json::StreamWriterBuilder builder;
             const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
+
+            //save meta-data
+            saveJsonRoot["topic"] = topicBuffer;
+            saveJsonRoot["keywords"] = Json::arrayValue;
+            std::string keywordsBufferStr(keywordsBuffer);
+            std::stringstream ss(keywordsBufferStr);
+            while (ss.good()) {
+                std::string substr;
+                std::getline(ss, substr, ',');
+                trim(substr);
+                if (!substr.empty()) {
+                    saveJsonRoot["keywords"].append(substr.c_str());
+                }
+            }
 
             //save boxes
             int i = 0;
@@ -486,6 +525,9 @@ int main( int argc, char* argv[] ) {
 
             writer->write(saveJsonRoot, &saveFile);
             saveFile.close();
+
+            //save image
+            if (cv::imwrite(filePath + "/" + fileName + ".png", image));
         }
 
         bool openButton = ImGui::Button("Open Image"); ImGui::SameLine();
