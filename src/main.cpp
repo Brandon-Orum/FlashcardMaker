@@ -125,6 +125,13 @@ void multiLinePutText(cv::Mat img,
     }
 }
 
+//make a file name for saving the flashcard
+void makeFileName(char* fileName) {    
+    time_t t = time(0);
+    struct tm* now = localtime(&t);
+    strftime(fileName, 128, "Flashcard-%Y-%m-%d-%H-%M-%S", now);
+}
+
 std::vector<std::string> getAllTopics() {
     std::vector<std::string> listOfTopics;
     return listOfTopics;
@@ -279,14 +286,9 @@ int main( int argc, char* argv[] ) {
         std::cout << errs << std::endl;
         return -1;
     }
-    std::cout << "Configuration:" << std::endl;
-    std::cout << configRoot << std::endl;
-
-    //make a file name for saving the flashcard
-    time_t t = time(0);
-    struct tm* now = localtime(&t);
-    char fileName[80];
-    strftime(fileName, 80, "Flashcard-%Y-%m-%d-%H-%M-%S", now);
+    
+    char fileName[128];
+    makeFileName(fileName);
 
     cv::Mat image;
     cv::Mat imageFromClipboard;
@@ -681,12 +683,19 @@ int main( int argc, char* argv[] ) {
                 saveFile.close();
 
                 //save image
-                if (cv::imwrite(filePath + "/" + topicStr + "/" + std::string(fileName) + ".png", image));
+                if (!cv::imwrite(filePath + "/" + topicStr + "/" + std::string(fileName) + ".png", image)) {
+                    std::cerr << "Error saving flashcard image." << std::endl;
+                }
             }
         }
 
         bool openButton = ImGui::Button("Open Image"); ImGui::SameLine();
-        bool newButton = ImGui::Button("New Flashcard");
+        if (ImGui::Button("New Flashcard")) {
+            makeFileName(fileName);
+            image = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
+            answerBoxPositions.clear();
+            questionBoxPositions.clear();
+        }
 
         static bool showPresentFlashcardsWindow = false;
         if (ImGui::Button("Present flashcards")) {
@@ -707,6 +716,7 @@ int main( int argc, char* argv[] ) {
             static bool showNewFlashcard = true;
             static bool hidingAnswer = true;
             static bool hidingQuestion = false;
+            static std::string flashcardKeywordsStr;
             ImGui::InputTextWithHint("Topics", "Filter by topics (seperate with commas)", topicsBuffer, IM_ARRAYSIZE(topicsBuffer),
                 ImGuiInputTextFlags_CallbackResize, topicsFilterCallback);
             if (topicsFilterCallbackCalled) {
@@ -730,11 +740,25 @@ int main( int argc, char* argv[] ) {
             numFlashcardString += std::to_string(foundFlashcardFileNames.size());
             ImGui::Text(numFlashcardString.c_str());
 
+            if (hidingAnswer) {
+                if (ImGui::Button("Show answer")) {
+                    hidingAnswer = false;
+                }
+            }
+            else {
+                if (ImGui::Button("Next flashcard")) {
+                    showNewFlashcard = true;
+                    hidingAnswer = true;
+                }
+            }
+
             //load a random flashcard
             if (showNewFlashcard && !foundFlashcardFileNames.empty()) {
                 std::string fileSavePath = configRoot["flashcardSavePath"].asString();
                 int ri = rand() % foundFlashcardFileNames.size();
                 currentFlashcardImage = loadFlashcardImage(fileSavePath, "test topic", foundFlashcardFileNames[ri]);
+                currentFlashcardAnswerBoxBounds.clear();
+                currentFlashcardQuestionBoxBounds.clear();
                 loadFlashcardBoxBounds(fileSavePath, "test topic", foundFlashcardFileNames[ri],
                     currentFlashcardAnswerBoxBounds, currentFlashcardQuestionBoxBounds);
                 showNewFlashcard = false;
@@ -751,18 +775,6 @@ int main( int argc, char* argv[] ) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, currentFlashcardCanvas.cols, currentFlashcardCanvas.rows,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, currentFlashcardCanvas.data);
             ImGui::Image(reinterpret_cast<void*>(static_cast<intptr_t>(texture)), ImVec2(currentFlashcardCanvas.cols, currentFlashcardCanvas.rows));
-
-            if (hidingAnswer) {
-                if (ImGui::Button("Show answer")) {
-                    hidingAnswer = false;
-                }
-            }
-            else {
-                if (ImGui::Button("Next flashcard")) {
-                    showNewFlashcard = true;
-                    hidingAnswer = true;
-                }
-            }
             
             ImGui::Text("Current flashcard keywords:");
             ImGui::Button("Back to creating flashcards");
