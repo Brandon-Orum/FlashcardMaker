@@ -46,6 +46,23 @@ void toLowercase(std::string& str) {
     std::transform(str.begin(), str.end(), str.begin(),
         [](unsigned char c) { return std::tolower(c); });
 }
+
+std::vector<std::string> splitString(const std::string& str, const std::string& delimiter) {
+    std::vector<std::string> strings;
+
+    std::string::size_type pos = 0;
+    std::string::size_type prev = 0;
+    while ((pos = str.find(delimiter, prev)) != std::string::npos)
+    {
+        strings.push_back(str.substr(prev, pos - prev));
+        prev = pos + delimiter.size();
+    }
+
+    // To get the last substring (or only, if delimiter is not found)
+    strings.push_back(str.substr(prev));
+
+    return strings;
+}
 ////////////
 
 void copyFromClipboard(cv::Mat& mat) {
@@ -89,23 +106,6 @@ void copyFromClipboard(cv::Mat& mat) {
     CloseClipboard();
 }
 
-std::vector<std::string> splitString(const std::string& str, const std::string& delimiter) {
-    std::vector<std::string> strings;
-
-    std::string::size_type pos = 0;
-    std::string::size_type prev = 0;
-    while ((pos = str.find(delimiter, prev)) != std::string::npos)
-    {
-        strings.push_back(str.substr(prev, pos - prev));
-        prev = pos + delimiter.size();
-    }
-
-    // To get the last substring (or only, if delimiter is not found)
-    strings.push_back(str.substr(prev));
-
-    return strings;
-}
-
 
 void multiLinePutText(cv::Mat img,
     std::string text,
@@ -137,17 +137,130 @@ std::vector<std::string> searchForFlashcards(std::string directory, std::string 
     // itterate through the keywords found in the json file
     // if all the keywords listed in keywords are found, then add the name of the file to flashcardFilenames
     struct stat sb;
-    const char* flashcardDirectory = std::string(directory + "/" + topic).c_str();
+    std::string flashcardDirectoryStr = std::string(directory + "/" + topic);
+    const char* flashcardDirectory = flashcardDirectoryStr.c_str();
     if (stat(flashcardDirectory, &sb) == 0) {
         for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(flashcardDirectory)) {
-            std::cout << dirEntry << std::endl;
+            if (dirEntry.path().extension() == ".json") {
+                Json::Value root;
+                std::ifstream ifs;
+                ifs.open(dirEntry);
+
+                Json::CharReaderBuilder builder;
+                builder["collectComments"] = true;
+                JSONCPP_STRING errs;
+                if (!parseFromStream(builder, ifs, &root, &errs)) {
+                    return flashcardFilenames;
+                    std::cerr << errs << std::endl;
+                }
+
+                std::cout << root << std::endl;
+
+                std::vector<std::string> flashcardKeywords;
+                if (root.isMember("keywords")) {
+                    for (auto flashcardKeyword : root["keywords"]) {
+                        flashcardKeywords.push_back(flashcardKeyword.asString());
+                    }
+                }
+
+                //check if all the keywords being searched for are found in this flashcard
+                bool allKeywordsFound = true;
+                for (auto keyword : keywords) {
+                    if (keyword.empty()) continue;
+                    if (std::find(flashcardKeywords.begin(), flashcardKeywords.end(), keyword) == flashcardKeywords.end()) {
+                        allKeywordsFound = false;
+                    }
+                }
+                if (!allKeywordsFound) {
+                    continue;
+                }
+
+                flashcardFilenames.push_back(dirEntry.path().filename().stem().string());
+
+                std::vector<std::pair<cv::Point, cv::Point>> answerBoxPositions;
+                if (root.isMember("answerBoxPositionsList")) {
+                    for (auto boxBounds : root["answerBoxPositionsList"]) {
+                        cv::Point boxPosition(boxBounds[0][0].asInt(), boxBounds[0][1].asInt());
+                        cv::Point boxEndPosition(boxBounds[1][0].asInt(), boxBounds[1][1].asInt());
+                        std::pair<cv::Point, cv::Point> boxBounds(boxPosition, boxEndPosition);
+                        answerBoxPositions.push_back(boxBounds);
+                    }
+                }
+
+                std::vector<std::pair<cv::Point, cv::Point>> questionBoxPositions;
+                if (root.isMember("questionBoxPositionsList")) {
+                    for (auto boxBounds : root["answerBoxPositionsList"]) {
+                        cv::Point boxPosition(boxBounds[0][0].asInt(), boxBounds[0][1].asInt());
+                        cv::Point boxEndPosition(boxBounds[1][0].asInt(), boxBounds[1][1].asInt());
+                        std::pair<cv::Point, cv::Point> boxBounds(boxPosition, boxEndPosition);
+                        questionBoxPositions.push_back(boxBounds);
+                    }
+                }
+            }            
         }
     }
     else {
-        int t = 0;
+        std::cerr << "Error searching for flashcards:" << std::endl;
+        std::cerr << "Folder with name: " << topic << " not found." << std::endl;
     }
     
     return flashcardFilenames;
+}
+
+cv::Mat loadFlashcardImage(std::string flashcardSavePath, std::string topic, std::string fileName) {
+    //cv imread needs an absolute path to read the image
+    std::filesystem::path fnPath(flashcardSavePath + "/" + "test topic" + "/" + fileName + ".png");
+    std::string fnPathStr = std::filesystem::absolute(fnPath).string();
+    cv::Mat img = cv::imread(fnPathStr);
+    cv::cvtColor(img, img, cv::COLOR_BGR2RGBA);
+    return img;
+}
+
+void loadFlashcardBoxBounds(std::string flashcardSavePath, std::string topic, std::string fileName,
+    std::vector<std::pair<cv::Point, cv::Point>> &answerBoxBounds,
+    std::vector<std::pair<cv::Point, cv::Point>> &questionBoxBounds) {
+
+    Json::Value root;
+    std::ifstream ifs;
+    ifs.open(flashcardSavePath + "/" + topic + "/" + fileName + ".json");
+
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = true;
+    JSONCPP_STRING errs;
+    if (!parseFromStream(builder, ifs, &root, &errs)) {
+        std::cerr << errs << std::endl;
+        return;        
+    }
+
+    if (root.isMember("answerBoxPositionsList")) {
+        for (auto boxBounds : root["answerBoxPositionsList"]) {
+            cv::Point boxPosition(boxBounds[0][0].asInt(), boxBounds[0][1].asInt());
+            cv::Point boxEndPosition(boxBounds[1][0].asInt(), boxBounds[1][1].asInt());
+            std::pair<cv::Point, cv::Point> boxBounds(boxPosition, boxEndPosition);
+            answerBoxBounds.push_back(boxBounds);
+        }
+    }
+
+    if (root.isMember("questionBoxPositionsList")) {
+        for (auto boxBounds : root["answerBoxPositionsList"]) {
+            cv::Point boxPosition(boxBounds[0][0].asInt(), boxBounds[0][1].asInt());
+            cv::Point boxEndPosition(boxBounds[1][0].asInt(), boxBounds[1][1].asInt());
+            std::pair<cv::Point, cv::Point> boxBounds(boxPosition, boxEndPosition);
+            questionBoxBounds.push_back(boxBounds);
+        }
+    }
+}
+
+bool topicsFilterCallbackCalled = false;
+int topicsFilterCallback(ImGuiInputTextCallbackData* data) {
+    topicsFilterCallbackCalled = true;
+    return 0;
+}
+
+bool keywordsFilterCallbackCalled = false;
+int keywordsFilterCallback(ImGuiInputTextCallbackData* data) {
+    keywordsFilterCallbackCalled = true;
+    return 0;
 }
 
 int main( int argc, char* argv[] ) {
@@ -190,6 +303,8 @@ int main( int argc, char* argv[] ) {
     }
     cv::cvtColor(image, image, cv::COLOR_BGR2RGBA);
     cv::Mat canvasMat;
+    cv::Mat currentFlashcardImage = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
+    cv::Mat currentFlashcardCanvas;
 
     //buffers
     static char textBuffer[1000*1000] = "";
@@ -531,6 +646,7 @@ int main( int argc, char* argv[] ) {
                     std::string substr;
                     std::getline(ss, substr, ',');
                     trim(substr);
+                    toLowercase(substr);
                     if (!substr.empty()) {
                         saveJsonRoot["keywords"].append(substr.c_str());
                     }
@@ -580,16 +696,76 @@ int main( int argc, char* argv[] ) {
 
         if (showPresentFlashcardsWindow) {
             ImGui::Begin("Present flashcards");
-            ImGui::InputTextWithHint("Topics", "Filter by topics (seperate with commas)", topicBuffer, IM_ARRAYSIZE(topicBuffer));
-            ImGui::InputTextWithHint("Keywords", "Filter by keywords (seperate with commas)", topicBuffer, IM_ARRAYSIZE(topicBuffer));
-            ImGui::Text("Flashcards found: 0");
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvasMat.cols, canvasMat.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, canvasMat.data);
-            ImGui::Image(reinterpret_cast<void*>(static_cast<intptr_t>(texture)), ImVec2(canvasMat.cols, canvasMat.rows));
-            ImGui::Text("Some text");
-            ImGui::Button("Back to creating flashcards");
 
-            //test code
-            searchForFlashcards("../SavedFlashcards", "test topic", { "keyword1", "keyword2", "keyword3" });
+            static char topicsBuffer[1000];
+            static char keywordsBuffer[1000];
+            static std::vector<std::string> searchTopics;
+            static std::vector<std::string> searchKeywords;
+            static std::vector<std::string> foundFlashcardFileNames;
+            static std::vector<std::pair<cv::Point, cv::Point>> currentFlashcardAnswerBoxBounds;
+            static std::vector<std::pair<cv::Point, cv::Point>> currentFlashcardQuestionBoxBounds;
+            static bool showNewFlashcard = true;
+            static bool hidingAnswer = true;
+            static bool hidingQuestion = false;
+            ImGui::InputTextWithHint("Topics", "Filter by topics (seperate with commas)", topicsBuffer, IM_ARRAYSIZE(topicsBuffer),
+                ImGuiInputTextFlags_CallbackResize, topicsFilterCallback);
+            if (topicsFilterCallbackCalled) {
+                std::cout << topicsBuffer << std::endl;
+                topicsFilterCallbackCalled = false;
+            }
+            ImGui::InputTextWithHint("Keywords", "Filter by keywords (seperate with commas)", keywordsBuffer, IM_ARRAYSIZE(keywordsBuffer),
+                ImGuiInputTextFlags_CallbackResize, keywordsFilterCallback);
+            if (keywordsFilterCallbackCalled) {
+                std::string fileSavePath = configRoot["flashcardSavePath"].asString();
+                searchKeywords = splitString(keywordsBuffer, ",");
+                for (std::string &keyword : searchKeywords) {
+                    trim(keyword);
+                    toLowercase(keyword);
+                }
+                foundFlashcardFileNames = searchForFlashcards(fileSavePath, "test topic", searchKeywords);
+                keywordsFilterCallbackCalled = false;
+                showNewFlashcard = true;
+            }
+            std::string numFlashcardString = "Flashcards found: ";
+            numFlashcardString += std::to_string(foundFlashcardFileNames.size());
+            ImGui::Text(numFlashcardString.c_str());
+
+            //load a random flashcard
+            if (showNewFlashcard && !foundFlashcardFileNames.empty()) {
+                std::string fileSavePath = configRoot["flashcardSavePath"].asString();
+                int ri = rand() % foundFlashcardFileNames.size();
+                currentFlashcardImage = loadFlashcardImage(fileSavePath, "test topic", foundFlashcardFileNames[ri]);
+                loadFlashcardBoxBounds(fileSavePath, "test topic", foundFlashcardFileNames[ri],
+                    currentFlashcardAnswerBoxBounds, currentFlashcardQuestionBoxBounds);
+                showNewFlashcard = false;
+            }
+            currentFlashcardImage.copyTo(currentFlashcardCanvas);
+
+            //draw boxes
+            if (hidingAnswer) {
+                for (std::pair<cv::Point, cv::Point>& boxBounds : currentFlashcardAnswerBoxBounds) {
+                    cv::rectangle(currentFlashcardCanvas, boxBounds.first, boxBounds.second, cv::Scalar(100, 0, 0, 255), cv::FILLED);
+                }
+            }
+
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, currentFlashcardCanvas.cols, currentFlashcardCanvas.rows,
+                0, GL_RGBA, GL_UNSIGNED_BYTE, currentFlashcardCanvas.data);
+            ImGui::Image(reinterpret_cast<void*>(static_cast<intptr_t>(texture)), ImVec2(currentFlashcardCanvas.cols, currentFlashcardCanvas.rows));
+
+            if (hidingAnswer) {
+                if (ImGui::Button("Show answer")) {
+                    hidingAnswer = false;
+                }
+            }
+            else {
+                if (ImGui::Button("Next flashcard")) {
+                    showNewFlashcard = true;
+                    hidingAnswer = true;
+                }
+            }
+            
+            ImGui::Text("Current flashcard keywords:");
+            ImGui::Button("Back to creating flashcards");
 
             ImGui::End();
         }
