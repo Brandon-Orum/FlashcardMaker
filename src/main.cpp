@@ -324,19 +324,21 @@ int main( int argc, char* argv[] ) {
     char fileName[128];
     makeFileName(fileName);
 
-    cv::Mat image;
+    cv::Mat image = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
     cv::Mat imageFromClipboard;
-    copyFromClipboard(imageFromClipboard);
-    if (imageFromClipboard.empty()) {
-        //if no image is found in the clipboard, display a blank flashcard
-        image = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
+
+    if (argc > 0 && argv[0][0] == 's') {
+        int t = 0;
     }
     else {
-        //if an image is found in the clipboard, increase the canvas size around the image
-        cv::Size cs = imageFromClipboard.size() + cv::Size(200, 200);
-        image = cv::Mat(cs.height, cs.width, CV_8UC4, cv::Scalar(255, 255, 255, 255));
-        imageFromClipboard.copyTo(image(cv::Rect(100, 100, imageFromClipboard.cols, imageFromClipboard.rows)));
-    }
+        copyFromClipboard(imageFromClipboard);
+        if (!imageFromClipboard.empty()) {
+            //if an image is found in the clipboard, increase the canvas size around the image
+            cv::Size cs = imageFromClipboard.size() + cv::Size(200, 200);
+            image = cv::Mat(cs.height, cs.width, CV_8UC4, cv::Scalar(255, 255, 255, 255));
+            imageFromClipboard.copyTo(image(cv::Rect(100, 100, imageFromClipboard.cols, imageFromClipboard.rows)));
+        }
+    }    
     cv::cvtColor(image, image, cv::COLOR_BGR2RGBA);
     cv::Mat canvasMat;
     cv::Mat currentFlashcardImage = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
@@ -594,7 +596,7 @@ int main( int argc, char* argv[] ) {
         else if (imagePlaced) {
             imagePlaced = false;
         }
-        else if (addMode == 1 || addMode == 2) {
+        else if (addMode == 1 || addMode == 2 || addMode == 3) {
             if ((mousePos.x - pos.x - canvasOffset.x > 0 && mousePos.x - pos.x - canvasOffset.x < canvasMat.cols) &&
                 (mousePos.y - pos.y - canvasOffset.y > 0 && mousePos.y - pos.y - canvasOffset.y < canvasMat.rows)) {
 
@@ -615,14 +617,22 @@ int main( int argc, char* argv[] ) {
                         if (addMode == 1) {
                             answerBoxPositions.push_back(boxBounds);
                         }
-                        else {
+                        else if (addMode == 2) {
                             questionBoxPositions.push_back(boxBounds);
+                        }
+                        else if (addMode == 3) {
+                            cv::Rect cropRect(cv::Rect(boxPosition, boxEndPosition));
+                            image = image(cropRect);
+                            addMode = 1;
                         }
                     }
                     boxPosition = cv::Point(0, 0);
                     cv::String str = " Click and drag to place a\n box over the answer";
                     if (addMode == 2) {
                         str = " Click and drag to place a\n box over the question";
+                    }
+                    else if (addMode == 3) {
+                        str = " Click and drag to crop \n the flashcard";
                     }
                     multiLinePutText(canvasMat, str, cv::Point(mousePos.x - pos.x, mousePos.y - pos.y), font, 0.5, cv::Scalar(0, 0, 255, 255));
                 }                
@@ -650,9 +660,10 @@ int main( int argc, char* argv[] ) {
         glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, canvasMat.cols, canvasMat.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, canvasMat.data );
         ImGui::Image( reinterpret_cast<void*>( static_cast<intptr_t>( texture ) ), ImVec2(canvasMat.cols, canvasMat.rows ) );
 
-        bool addTextButton = ImGui::RadioButton("Add Text/Image", &addMode, 0); ImGui::SameLine();
-        bool addAnswerBoxButton = ImGui::RadioButton("Add Answer Box", &addMode ,1); ImGui::SameLine();
-        bool addQuestionBoxButton = ImGui::RadioButton("Add Question Box", &addMode, 2);
+        ImGui::RadioButton("Add Text/Image", &addMode, 0); ImGui::SameLine();
+        ImGui::RadioButton("Add Answer Box", &addMode ,1); ImGui::SameLine();
+        ImGui::RadioButton("Add Question Box", &addMode, 2); ImGui::SameLine();
+        ImGui::RadioButton("Crop Flashcard", &addMode, 3);
 
         ImGui::Text("Topic:"); ImGui::SameLine();
         ImGui::InputText("", topicBuffer, IM_ARRAYSIZE(topicBuffer));
@@ -740,6 +751,7 @@ int main( int argc, char* argv[] ) {
             copyFromClipboard(imageFromClipboard);
             if (!imageFromClipboard.empty()) {
                 image = imageFromClipboard;
+                addMode = 3;
             }
             glfwShowWindow(window);
         }
