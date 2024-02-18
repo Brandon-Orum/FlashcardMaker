@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <cstdlib>
 #include <sys/stat.h>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
@@ -310,16 +311,26 @@ int main( int argc, char* argv[] ) {
     //read config file
     Json::Value configRoot;
     std::ifstream ifs;
-    ifs.open("../defaultConfig.json");
+    const char* envConfigPath;
+    std::string defaultConfigFilePath = "../defaultConfig.json";
+    if (envConfigPath = std::getenv("FlashcardMakerConfigFile")) {
+        std::string tst(envConfigPath);
+        ifs.open(envConfigPath);
+    }
+    else {
+        envConfigPath = defaultConfigFilePath.c_str();
+        ifs.open(defaultConfigFilePath);
+    }    
 
     Json::CharReaderBuilder builder;
     builder["collectComments"] = true;
     JSONCPP_STRING errs;
     if (!parseFromStream(builder, ifs, &configRoot, &errs)) {
-        std::cout << "Error reading config file" << std::endl;
-        std::cout << errs << std::endl;
+        std::cerr << "Error reading config file" << std::endl;
+        std::cerr << errs << std::endl;
         return -1;
     }
+    ifs.close();
     
     char fileName[128];
     makeFileName(fileName);
@@ -327,13 +338,13 @@ int main( int argc, char* argv[] ) {
     cv::Mat image = cv::Mat(400, 800, CV_8UC4, cv::Scalar(255, 255, 255, 255));
     cv::Mat imageFromClipboard;
 
-    if (argc > 0 && argv[0][0] == 's') {
-        int t = 0;
+    static bool takeScreenshot = true;
+    if (argc > 1 && argv[1][0] == 's') {
+        takeScreenshot = false;
     }
-    else {
+    else  if (argc > 1 && argv[1][0] == 'c') {
         copyFromClipboard(imageFromClipboard);
         if (!imageFromClipboard.empty()) {
-            //if an image is found in the clipboard, increase the canvas size around the image
             cv::Size cs = imageFromClipboard.size() + cv::Size(200, 200);
             image = cv::Mat(cs.height, cs.width, CV_8UC4, cv::Scalar(255, 255, 255, 255));
             imageFromClipboard.copyTo(image(cv::Rect(100, 100, imageFromClipboard.cols, imageFromClipboard.rows)));
@@ -345,15 +356,30 @@ int main( int argc, char* argv[] ) {
     cv::Mat currentFlashcardCanvas;
 
     //buffers
-    static char textBuffer[1000*1000] = "";
+    static char textBuffer[1000*1000] = "";    
     static char topicBuffer[128] = "";
+    if (configRoot.isMember("lastUsedTopic")) {
+        std::string lastUsedTopic = configRoot["lastUsedTopic"].asString();
+        strncpy(topicBuffer, lastUsedTopic.c_str(), lastUsedTopic.length());
+    }
     static char keywordsBuffer[1000] = "";
+    if (configRoot.isMember("lastUsedKeywords")) {
+        std::string keywordsStr;
+        bool firstKeyword = true;
+        for (auto keyword : configRoot["lastUsedKeywords"]) {
+            if (!firstKeyword) keywordsStr += ", ";
+            keywordsStr += keyword.asString();
+            firstKeyword = false;
+        }
+        strncpy(keywordsBuffer, keywordsStr.c_str(), keywordsStr.length());
+    }
+
 
     if( !glfwInit() ){
         return -1;
     }
 
-    GLFWwindow* window = glfwCreateWindow( 1000, 1080, "Flashcards", nullptr, nullptr );
+    GLFWwindow* window = glfwCreateWindow( 1920, 1080, "Flashcards", nullptr, nullptr );
     glfwSetWindowPos(window, 0, 0);
     
     glfwSetWindowCloseCallback( window, []( GLFWwindow* window ){ glfwSetWindowShouldClose( window, GL_FALSE ); } );
@@ -681,10 +707,18 @@ int main( int argc, char* argv[] ) {
             //create folder with topic's name
             if (CreateDirectory(std::string(filePath + "/" + topicStr).c_str(), NULL) || ERROR_ALREADY_EXISTS == GetLastError()) {
                 std::ofstream saveFile(filePath + "/" + topicStr + "/" + std::string(fileName) + ".json");
+                std::ofstream configFile(envConfigPath);
 
                 Json::Value saveJsonRoot;
                 Json::StreamWriterBuilder builder;
                 const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
+
+                if (!configRoot["lastUsedKeywords"].isArray()) {
+                    configRoot["lastUsedKeywords"] = Json::arrayValue;
+                }
+                else {
+                    configRoot["lastUsedKeywords"].clear();
+                }
 
                 //save meta-data
                 saveJsonRoot["topic"] = topicBuffer;
@@ -698,8 +732,12 @@ int main( int argc, char* argv[] ) {
                     toLowercase(substr);
                     if (!substr.empty()) {
                         saveJsonRoot["keywords"].append(substr.c_str());
+                        //save the last used keywords to the config file
+                        configRoot["lastUsedKeywords"].append(substr.c_str());
                     }
                 }
+                //save the last used topic to the config file
+                configRoot["lastUsedTopic"] = topicBuffer;
 
                 //save boxes
                 int i = 0;
@@ -726,8 +764,15 @@ int main( int argc, char* argv[] ) {
                     i++;
                 }
 
-                writer->write(saveJsonRoot, &saveFile);
+                
+
+                //save flashcard configuration
+                writer->write(saveJsonRoot, &saveFile);                
                 saveFile.close();
+                
+                //save app configuration
+                writer->write(configRoot, &configFile);
+                configFile.close();
 
                 //save image
                 if (!cv::imwrite(filePath + "/" + topicStr + "/" + std::string(fileName) + ".png", image)) {
@@ -745,10 +790,15 @@ int main( int argc, char* argv[] ) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Take Screenshot")) {
+            takeScreenshot = true;
+        }
+        if (takeScreenshot) {
+            takeScreenshot = false;
             glfwHideWindow(window);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             GetScreenShot();
             copyFromClipboard(imageFromClipboard);
+            cv::cvtColor(imageFromClipboard, imageFromClipboard, cv::COLOR_BGR2RGBA);
             if (!imageFromClipboard.empty()) {
                 image = imageFromClipboard;
                 addMode = 3;
