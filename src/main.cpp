@@ -16,6 +16,9 @@
 
 #include <json.h>
 
+#include <chrono>
+#include <thread>
+
 
 //////////////put into seperate library
 #include <algorithm> 
@@ -270,6 +273,37 @@ int keywordsFilterCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
+void GetScreenShot(void) {
+    int x1, y1, x2, y2, w, h;
+
+    // get screen dimensions
+    x1 = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    y1 = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    x2 = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    y2 = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    w = x2 - x1;
+    h = y2 - y1;
+
+    // copy screen to bitmap
+    HDC     hScreen = GetDC(NULL);
+    HDC     hDC = CreateCompatibleDC(hScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, w, h);
+    HGDIOBJ old_obj = SelectObject(hDC, hBitmap);
+    BOOL    bRet = BitBlt(hDC, 0, 0, w, h, hScreen, x1, y1, SRCCOPY);
+
+    // save bitmap to clipboard
+    OpenClipboard(NULL);
+    EmptyClipboard();
+    SetClipboardData(CF_BITMAP, hBitmap);
+    CloseClipboard();
+
+    // clean up
+    SelectObject(hDC, old_obj);
+    DeleteDC(hDC);
+    ReleaseDC(NULL, hScreen);
+    DeleteObject(hBitmap);
+}
+
 int main( int argc, char* argv[] ) {
     cv::utils::logging::setLogLevel(cv::utils::logging::LogLevel::LOG_LEVEL_SILENT);
 
@@ -317,7 +351,9 @@ int main( int argc, char* argv[] ) {
         return -1;
     }
 
-    GLFWwindow* window = glfwCreateWindow( 1000, 600, "Flashcards", nullptr, nullptr );
+    GLFWwindow* window = glfwCreateWindow( 1000, 1080, "Flashcards", nullptr, nullptr );
+    glfwSetWindowPos(window, 0, 0);
+    
     glfwSetWindowCloseCallback( window, []( GLFWwindow* window ){ glfwSetWindowShouldClose( window, GL_FALSE ); } );
     glfwMakeContextCurrent( window );
     glfwSwapInterval( 1 );
@@ -696,7 +732,17 @@ int main( int argc, char* argv[] ) {
             answerBoxPositions.clear();
             questionBoxPositions.clear();
         }
-
+        ImGui::SameLine();
+        if (ImGui::Button("Take Screenshot")) {
+            glfwHideWindow(window);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            GetScreenShot();
+            copyFromClipboard(imageFromClipboard);
+            if (!imageFromClipboard.empty()) {
+                image = imageFromClipboard;
+            }
+            glfwShowWindow(window);
+        }
         static bool showPresentFlashcardsWindow = false;
         if (ImGui::Button("Present flashcards")) {
             showPresentFlashcardsWindow = true;
