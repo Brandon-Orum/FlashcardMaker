@@ -151,7 +151,7 @@ std::vector<std::string> searchForFlashcards(std::string directory, std::string 
     std::string flashcardDirectoryStr = std::string(directory + "/" + topic);
     const char* flashcardDirectory = flashcardDirectoryStr.c_str();
     if (stat(flashcardDirectory, &sb) == 0) {
-        for (const auto& dirEntry : std::filesystem::recursive_directory_iterator(flashcardDirectory)) {
+        for (const auto& dirEntry : std::filesystem::directory_iterator(flashcardDirectory)) {
             if (dirEntry.path().extension() == ".json") {
                 Json::Value root;
                 std::ifstream ifs;
@@ -220,10 +220,12 @@ std::vector<std::string> searchForFlashcards(std::string directory, std::string 
 
 cv::Mat loadFlashcardImage(std::string flashcardSavePath, std::string topic, std::string fileName) {
     //cv imread needs an absolute path to read the image
-    std::filesystem::path fnPath(flashcardSavePath + "/" + "test topic" + "/" + fileName + ".png");
+    std::filesystem::path fnPath(flashcardSavePath + "/" + topic + "/" + fileName + ".png");
     std::string fnPathStr = std::filesystem::absolute(fnPath).string();
     cv::Mat img = cv::imread(fnPathStr);
-    cv::cvtColor(img, img, cv::COLOR_BGR2RGBA);
+    if (!img.empty()) {
+        cv::cvtColor(img, img, cv::COLOR_BGR2RGBA);    }
+    
     return img;
 }
 
@@ -253,7 +255,7 @@ void loadFlashcardBoxBounds(std::string flashcardSavePath, std::string topic, st
     }
 
     if (root.isMember("questionBoxPositionsList")) {
-        for (auto boxBounds : root["answerBoxPositionsList"]) {
+        for (auto boxBounds : root["questionBoxPositionsList"]) {
             cv::Point boxPosition(boxBounds[0][0].asInt(), boxBounds[0][1].asInt());
             cv::Point boxEndPosition(boxBounds[1][0].asInt(), boxBounds[1][1].asInt());
             std::pair<cv::Point, cv::Point> boxBounds(boxPosition, boxEndPosition);
@@ -775,9 +777,11 @@ int main( int argc, char* argv[] ) {
                 configFile.close();
 
                 //save image
+                cv::cvtColor(image, image, cv::COLOR_BGR2RGBA);
                 if (!cv::imwrite(filePath + "/" + topicStr + "/" + std::string(fileName) + ".png", image)) {
                     std::cerr << "Error saving flashcard image." << std::endl;
                 }
+                cv::cvtColor(image, image, cv::COLOR_BGR2RGBA);
             }
         }
 
@@ -840,7 +844,7 @@ int main( int argc, char* argv[] ) {
                     trim(keyword);
                     toLowercase(keyword);
                 }
-                foundFlashcardFileNames = searchForFlashcards(fileSavePath, "test topic", searchKeywords);
+                foundFlashcardFileNames = searchForFlashcards(fileSavePath, topicsBuffer, searchKeywords);
                 keywordsFilterCallbackCalled = false;
                 showNewFlashcard = true;
             }
@@ -853,6 +857,11 @@ int main( int argc, char* argv[] ) {
                     hidingAnswer = false;
                 }
             }
+            else if (hidingQuestion) {
+                if (ImGui::Button("Show question")) {
+                    hidingQuestion = false;
+                }
+            }
             else {
                 if (ImGui::Button("Next flashcard")) {
                     showNewFlashcard = true;
@@ -862,20 +871,30 @@ int main( int argc, char* argv[] ) {
 
             //load a random flashcard
             if (showNewFlashcard && !foundFlashcardFileNames.empty()) {
+                showNewFlashcard = false;
                 std::string fileSavePath = configRoot["flashcardSavePath"].asString();
                 int ri = rand() % foundFlashcardFileNames.size();
-                currentFlashcardImage = loadFlashcardImage(fileSavePath, "test topic", foundFlashcardFileNames[ri]);
+                currentFlashcardImage = loadFlashcardImage(fileSavePath, topicsBuffer, foundFlashcardFileNames[ri]);
                 currentFlashcardAnswerBoxBounds.clear();
                 currentFlashcardQuestionBoxBounds.clear();
-                loadFlashcardBoxBounds(fileSavePath, "test topic", foundFlashcardFileNames[ri],
+                loadFlashcardBoxBounds(fileSavePath, topicsBuffer, foundFlashcardFileNames[ri],
                     currentFlashcardAnswerBoxBounds, currentFlashcardQuestionBoxBounds);
-                showNewFlashcard = false;
+                //choose wether to hide the answer or the question
+                if (!currentFlashcardQuestionBoxBounds.empty()) {
+                    hidingAnswer = (rand() % 2) == 0;
+                    hidingQuestion = !hidingAnswer;
+                }                
             }
-            currentFlashcardImage.copyTo(currentFlashcardCanvas);
+            currentFlashcardImage.copyTo(currentFlashcardCanvas);            
 
             //draw boxes
             if (hidingAnswer) {
                 for (std::pair<cv::Point, cv::Point>& boxBounds : currentFlashcardAnswerBoxBounds) {
+                    cv::rectangle(currentFlashcardCanvas, boxBounds.first, boxBounds.second, cv::Scalar(100, 0, 0, 255), cv::FILLED);
+                }
+            }
+            if (hidingQuestion) {
+                for (std::pair<cv::Point, cv::Point>& boxBounds : currentFlashcardQuestionBoxBounds) {
                     cv::rectangle(currentFlashcardCanvas, boxBounds.first, boxBounds.second, cv::Scalar(100, 0, 0, 255), cv::FILLED);
                 }
             }
