@@ -42,8 +42,13 @@ set( jsoncpp
   libs/jsoncpp/jsoncpp.cpp
 )
 
+set ( StrUtils
+  libs/StrUtils/include/StrUtils.hpp
+  libs/StrUtils/src/StrUtils.cpp
+)
+
 project( FlashcardMaker )
-add_executable( FlashcardMaker ${imgui_files} ${imgui_impl_files} ${gl3w} ${jsoncpp} src/main.cpp )
+add_executable( FlashcardMaker ${imgui_files} ${imgui_impl_files} ${gl3w} ${jsoncpp} ${StrUtils} src/main.cpp )
 
 set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "FlashcardMaker" )
 
@@ -81,3 +86,4 @@ if( OpenCV_FOUND AND OPENGL_FOUND )
 endif()
 
 include_directories( libs/jsoncpp/json/ )
+include_directories( libs/StrUtils/include/ )
