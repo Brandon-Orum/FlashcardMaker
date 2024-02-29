@@ -322,7 +322,8 @@ int main( int argc, char* argv[] ) {
     else {
         envConfigPath = defaultConfigFilePath.c_str();
         ifs.open(defaultConfigFilePath);
-    }    
+    }
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
     Json::CharReaderBuilder builder;
     builder["collectComments"] = true;
